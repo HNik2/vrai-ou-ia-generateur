@@ -73,7 +73,9 @@ jobs:
           free -h; nproc; df -h .
 
       - name: Générer
-        run: python3 generate.py
+        run: |
+          free -h; nproc; lscpu | grep -i 'model name\|flags' | cut -c1-200
+          python3 -u generate.py
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -28,19 +28,23 @@ for item in mine:
         "--cfg-scale", "1.0",
         "--sampling-method", "euler",
         "--steps", "4",
-        "-W", str(item.get("width", 768)),
-        "-H", str(item.get("height", 576)),
+        "-W", str(item.get("width", 640)),
+        "-H", str(item.get("height", 480)),
         "-s", str(item.get("seed", 42)),
         "-t", str(os.cpu_count() or 4),
         "--disable-image-metadata",
         "-o", str(target),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Journal en direct : un travail coupé par le délai garde au moins sa trace.
+    try:
+        code = subprocess.run(cmd + ["-v"], timeout=int(os.environ.get("IMAGE_TIMEOUT", 1800))).returncode
+    except subprocess.TimeoutExpired:
+        code = "délai dépassé"
     seconds = round(time.time() - started)
-    if result.returncode != 0 or not target.exists():
-        print(f"ÉCHEC {item['id']} ({seconds} s)\n{result.stdout[-3000:]}\n{result.stderr[-3000:]}", file=sys.stderr)
+    if code != 0 or not target.exists():
+        print(f"ÉCHEC {item['id']} ({seconds} s) : {code}", file=sys.stderr, flush=True)
         continue
-    print(f"{item['id']} : {seconds} s")
+    print(f"{item['id']} : {seconds} s", flush=True)
     done.append({**item, "model": "flux-schnell", "file": target.name, "seconds": seconds})
 
 Path(OUT / f"manifest-{SHARD}.json").write_text(json.dumps(done, ensure_ascii=False, indent=1))
