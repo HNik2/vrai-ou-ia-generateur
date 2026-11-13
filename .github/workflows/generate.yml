@@ -24,8 +24,8 @@ jobs:
       - id: n
         run: |
           N=$(jq length prompts.json)
-          # 4 images au plus par machine, 20 machines au plus.
-          S=$(( (N + 3) / 4 )); [ "$S" -gt 20 ] && S=20; [ "$S" -lt 1 ] && S=1
+          # 3 images au plus par machine (≈ 16 min chacune), 20 machines au plus.
+          S=$(( (N + 2) / 3 )); [ "$S" -gt 20 ] && S=20; [ "$S" -lt 1 ] && S=1
           echo "count=$N" >> "$GITHUB_OUTPUT"
           echo "shards=$(jq -nc "[range($S)]")" >> "$GITHUB_OUTPUT"
 
