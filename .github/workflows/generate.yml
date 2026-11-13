@@ -1,0 +1,112 @@
+name: Générer
+
+on:
+  push:
+    branches: [main]
+    paths: ['prompts.json']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: generer
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.n.outputs.shards }}
+      count: ${{ steps.n.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: n
+        run: |
+          N=$(jq length prompts.json)
+          # 4 images au plus par machine, 20 machines au plus.
+          S=$(( (N + 3) / 4 )); [ "$S" -gt 20 ] && S=20; [ "$S" -lt 1 ] && S=1
+          echo "count=$N" >> "$GITHUB_OUTPUT"
+          echo "shards=$(jq -nc "[range($S)]")" >> "$GITHUB_OUTPUT"
+
+  generate:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.shards) }}
+    env:
+      SHARD: ${{ matrix.shard }}
+      SHARDS: ${{ strategy.job-total }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: stable-diffusion.cpp (version publiée, processeur)
+        run: |
+          gh release download --repo leejet/stable-diffusion.cpp \
+            --pattern '*-bin-Linux-Ubuntu-24.04-x86_64.zip' --output sd.zip
+          unzip -q sd.zip -d sd && chmod +x sd/sd-cli && ls sd
+
+      - name: Modèles (Hugging Face)
+        run: |
+          mkdir -p models
+          get() { curl -fsSL --retry 5 --retry-delay 5 -o "models/$1" "$2"; ls -lh "models/$1"; }
+          get flux.gguf        https://huggingface.co/leejet/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-q4_0.gguf
+          get t5.gguf          https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q5_K_M.gguf
+          get clip_l.safetensors https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors
+          get ae.safetensors   https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors \
+            || get ae.safetensors https://huggingface.co/ffxvs/vae-flux/resolve/main/ae.safetensors
+          free -h; nproc; df -h .
+
+      - name: Générer
+        run: python3 generate.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: images-${{ matrix.shard }}
+          path: out/
+          retention-days: 3
+          if-no-files-found: ignore
+
+  publish:
+    needs: generate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Ranger les images sur la branche « sorties »
+        run: |
+          git config user.name "generateur-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin sorties || true
+          if git rev-parse --verify origin/sorties >/dev/null 2>&1; then
+            git checkout -B sorties origin/sorties
+          else
+            git checkout --orphan sorties && git rm -rfq . && rm -rf .github *.py *.json *.md
+          fi
+          mkdir -p sorties
+          find parts -name '*.png' -exec cp {} sorties/ \;
+          python3 - <<'PY'
+          import json, glob, pathlib
+          path = pathlib.Path("sorties/manifest.json")
+          manifest = json.loads(path.read_text()) if path.exists() else []
+          seen = {m["id"] for m in manifest}
+          for part in sorted(glob.glob("parts/*/manifest-*.json")):
+              for item in json.loads(open(part).read()):
+                  if item["id"] not in seen:
+                      manifest.append(item); seen.add(item["id"])
+          path.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n")
+          print(len(manifest), "image(s) au total")
+          PY
+          git add sorties
+          git diff --cached --quiet || git commit -qm "Nouvelles images"
+          git push origin sorties
