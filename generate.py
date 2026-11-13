@@ -19,7 +19,7 @@ for item in mine:
     target = OUT / f"{item['id']}.png"
     started = time.time()
     cmd = [
-        "./sd/sd-cli",
+        "./bin/sd-cli",
         "--diffusion-model", str(MODELS / "flux.gguf"),
         "--vae", str(MODELS / "ae.safetensors"),
         "--clip_l", str(MODELS / "clip_l.safetensors"),

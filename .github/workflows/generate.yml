@@ -46,9 +46,20 @@ jobs:
 
       - name: stable-diffusion.cpp (version publiée, processeur)
         run: |
-          gh release download --repo leejet/stable-diffusion.cpp \
-            --pattern '*-bin-Linux-Ubuntu-24.04-x86_64.zip' --output sd.zip
-          unzip -q sd.zip -d sd && chmod +x sd/sd-cli && ls sd
+          ASSETS=$(gh release view --repo leejet/stable-diffusion.cpp --json tagName,assets \
+            -q '.tagName + "\n" + ([.assets[].name] | join("\n"))')
+          echo "$ASSETS"
+          NAME=$(echo "$ASSETS" | grep -i 'linux' | grep -i 'x86_64\|x64\|amd64' \
+            | grep -vi 'vulkan\|rocm\|cuda\|sycl\|arm\|aarch64' | grep -i '\.zip$' | head -1)
+          test -n "$NAME" || { echo "Aucune version Linux processeur trouvée"; exit 1; }
+          echo "Version retenue : $NAME"
+          gh release download --repo leejet/stable-diffusion.cpp --pattern "$NAME" --output sd.zip
+          unzip -q sd.zip -d sd
+          BIN=$(find sd -type f -name 'sd-cli' -o -type f -name 'sd' | head -1)
+          test -n "$BIN" || { find sd | head -50; exit 1; }
+          mkdir -p bin && cp -r "$(dirname "$BIN")"/* bin/ && chmod +x bin/*
+          [ -f bin/sd-cli ] || mv bin/sd bin/sd-cli
+          ls bin && ldd bin/sd-cli | grep 'not found' || true
 
       - name: Modèles (Hugging Face)
         run: |
@@ -92,6 +103,9 @@ jobs:
             git checkout -B sorties origin/sorties
           else
             git checkout --orphan sorties && git rm -rfq . && rm -rf .github *.py *.json *.md
+          fi
+          if [ -z "$(find parts -name '*.png' 2>/dev/null | head -1)" ]; then
+            echo "Aucune image : rien à ranger."; exit 0
           fi
           mkdir -p sorties
           find parts -name '*.png' -exec cp {} sorties/ \;
